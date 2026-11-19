@@ -1,0 +1,213 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum UserRole {
+  ADMIN
+  DENTAL_ASSISTANT
+  DENTIST
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  SMS
+}
+
+enum TreatmentStatus {
+  PENDING_FOLLOWUP
+  FOLLOWUP_SCHEDULED
+  COMPLETED
+  OVERDUE
+  CANCELLED
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ReminderStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  CANCELLED
+  READ
+}
+
+// ==========================================
+// MODELS
+// ==========================================
+
+/// Administrative staff, dental assistants, and dentists managing clinic workflows
+model User {
+  id                  String             @id @default(uuid())
+  email               String             @unique
+  password            String             // Hashed authentication credential
+  firstName           String
+  lastName            String
+  role                UserRole           @default(DENTAL_ASSISTANT)
+  phone               String?
+  isActive            Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  // Relations
+  performedTreatments PatientProcedure[] @relation("PerformedByUser")
+  appointments        Appointment[]      @relation("AssignedStaff")
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+/// Dental patients receiving treatments and follow-up communications
+model Patient {
+  id                String              @id @default(uuid())
+  firstName         String
+  lastName          String
+  email             String              @unique
+  phone             String              // Phone / WhatsApp number with international code
+  dateOfBirth       DateTime?
+  gender            String?
+  preferredChannel  NotificationChannel @default(WHATSAPP)
+  clinicalNotes     String?             @db.Text
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  patientProcedures PatientProcedure[]
+  appointments      Appointment[]
+  reminders         Reminder[]
+
+  @@index([email])
+  @@index([phone])
+  @@map("patients")
+}
+
+/// Catalog of dental procedures offered by the clinic and default follow-up intervals
+model Procedure {
+  id                  String             @id @default(uuid())
+  name                String             @unique
+  code                String?            @unique // E.g., ENDO-01, ORTHO-02, SURG-01
+  description         String?            @db.Text
+  defaultFollowUpDays Int                // Default follow-up interval in days
+  category            String?            // E.g., Endodontics, Orthodontics, Oral Surgery, Preventive
+  isActive            Boolean            @default(true)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  // Relations
+  patientProcedures   PatientProcedure[]
+
+  @@index([name])
+  @@index([category])
+  @@map("procedures")
+}
+
+/// TreatmentLog / PatientProcedure: links patients to completed procedures and tracks follow-up requirements
+model PatientProcedure {
+  id              String          @id @default(uuid())
+  patientId       String
+  patient         Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  procedureId     String
+  procedure       Procedure       @relation(fields: [procedureId], references: [id], onDelete: Restrict)
+  performedById   String?
+  performedBy     User?           @relation("PerformedByUser", fields: [performedById], references: [id], onDelete: SetNull)
+  procedureDate   DateTime        @default(now())
+  followUpDueDate DateTime        // Calculated follow-up due date (procedureDate + defaultFollowUpDays)
+  status          TreatmentStatus @default(PENDING_FOLLOWUP)
+  notes           String?         @db.Text
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  appointments    Appointment[]
+  reminders       Reminder[]
+
+  @@index([patientId])
+  @@index([procedureId])
+  @@index([performedById])
+  @@index([followUpDueDate])
+  @@index([status])
+  @@map("patient_procedures")
+}
+
+/// Scheduled follow-up control and clinical appointments
+model Appointment {
+  id                 String            @id @default(uuid())
+  patientId          String
+  patient            Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientProcedureId String?
+  patientProcedure   PatientProcedure? @relation(fields: [patientProcedureId], references: [id], onDelete: SetNull)
+  userId             String?
+  user               User?             @relation("AssignedStaff", fields: [userId], references: [id], onDelete: SetNull)
+  scheduledAt        DateTime          // Appointment date and time
+  durationMinutes    Int               @default(30)
+  status             AppointmentStatus @default(PENDING)
+  notes              String?           @db.Text
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  // Relations
+  reminders          Reminder[]
+
+  @@index([patientId])
+  @@index([patientProcedureId])
+  @@index([userId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("appointments")
+}
+
+/// Multi-channel automated notifications and unresponsive patient escalation tracking
+model Reminder {
+  id                 String              @id @default(uuid())
+  patientId          String
+  patient            Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientProcedureId String?
+  patientProcedure   PatientProcedure?   @relation(fields: [patientProcedureId], references: [id], onDelete: SetNull)
+  appointmentId      String?
+  appointment        Appointment?        @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  channel            NotificationChannel
+  status             ReminderStatus      @default(PENDING)
+  scheduledFor       DateTime            // Planned dispatch timestamp
+  sentAt             DateTime?           // Actual dispatch timestamp
+  bookingToken       String              @unique @default(uuid()) // Unique patient self-service portal token
+  bookingUrl         String?             // Direct portal booking link
+  messageContent     String?             @db.Text
+  retryCount         Int                 @default(0) // Retry tracking for delivery failures or unresponsiveness
+  maxRetries         Int                 @default(3)
+  isEscalated        Boolean             @default(false) // Flagged for staff escalation when patient is unresponsive
+  escalatedAt        DateTime?
+  escalationNotes    String?             @db.Text
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([patientId])
+  @@index([patientProcedureId])
+  @@index([appointmentId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([channel])
+  @@index([bookingToken])
+  @@index([isEscalated])
+  @@map("reminders")
+}
