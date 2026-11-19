@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/env';
 import healthRouter from './routes/health.routes';
+import patientRouter from './routes/patient.routes';
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware';
 
 const app: Application = express();
@@ -24,6 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // API Base Routes
 app.use('/api/health', healthRouter);
+app.use('/api/patients', patientRouter);
 
 // Error Handling Middlewares (Must be registered after all routes)
 app.use(notFoundHandler);
