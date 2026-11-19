@@ -16,6 +16,7 @@ Each team member adds one favorite quote here.
 
 > Mosiah 4:11, chose by Cristian De La Hoz
 
+> “Through small and simple things, great things are brought about.” - Alma 36:37, chose by Bryan Santana
 
 
 # 1. Install Prisma Client
